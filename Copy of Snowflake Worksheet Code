@@ -1,0 +1,76 @@
+SELECT CURRENT_VERSION();
+USE DATABASE NFL_DATA;
+USE SCHEMA NFL_DUMP;
+CREATE STAGE IF NOT EXISTS NFL_STAGE 
+  FILE_FORMAT = (TYPE = JSON COMPRESSION = GZIP);
+CREATE OR REPLACE TABLE nfl_raw (raw VARIANT);
+COPY INTO nfl_raw
+FROM @NFL_STAGE/nfl_20250810_061106.json.gz
+FILE_FORMAT = (
+    TYPE = 'JSON'
+    COMPRESSION = 'GZIP'
+    STRIP_OUTER_ARRAY = TRUE
+);
+CREATE OR REPLACE TABLE nfl_player_stats AS
+SELECT
+    raw:"player_name"::string AS player_name,
+    raw:"team"::string AS team,
+    raw:"season_year"::string AS season_year,
+    raw:"season_type"::string AS season_type,
+    raw:"player_games_played"::int AS games_played,
+    raw:"player_points_per_game"::float AS ppg,
+    raw:"player_assists_per_game"::float AS apg,
+    raw:"player_rebounds_per_game"::float AS rpg,
+    raw:"player_steals_per_game"::float AS spg,
+    raw:"player_blocks_per_game"::float AS bpg,
+    raw:"player_turnovers_per_game"::float AS topg,
+    raw:"player_fouls_per_game"::float AS fpg,
+    raw:"player_minutes_per_game"::float AS mpg,
+    raw:"player_assist_to_turnover_ratio"::float AS ast_to_to_ratio,
+    raw:"url"::string AS player_url
+FROM nfl_raw;
+CREATE OR REPLACE TABLE nfl_player_stats_clean AS
+SELECT
+    INITCAP(player_name) AS player_name,
+    UPPER(team) AS team,
+    season_year,
+    season_type,
+    games_played::INT AS games_played,
+    ppg::FLOAT AS points_per_game,
+    apg::FLOAT AS assists_per_game,
+    rpg::FLOAT AS rebounds_per_game,
+    spg::FLOAT AS steals_per_game,
+    bpg::FLOAT AS blocks_per_game,
+    topg::FLOAT AS turnovers_per_game,
+    fpg::FLOAT AS fouls_per_game,
+    mpg::FLOAT AS minutes_per_game,
+    ast_to_to_ratio::FLOAT AS assist_to_turnover_ratio,
+    player_url
+FROM nfl_player_stats
+WHERE player_name IS NOT NULL
+ORDER BY team, player_name;
+select * 
+from table(snowflake.information_schema.login_history())
+where user_name = 'MY_USERNAME'
+and is_success = 'NO';
+SELECT CURRENT_ACCOUNT_NAME();
+SELECT CURRENT_REGION();
+SELECT CURRENT_CLIENT();
+CREATE OR REPLACE TABLE nfl_top_players_all_seasons AS
+WITH top_2024_players AS (
+    SELECT player_name
+    FROM nfl_player_stats_clean
+    WHERE season_year = '2024-25'
+    ORDER BY points_per_game DESC
+    LIMIT 5
+)
+SELECT 
+    p.*,
+    (points_per_game + rebounds_per_game + assists_per_game) AS pra_per_game,
+    ROUND(points_per_game / NULLIF(minutes_per_game, 0), 2) AS points_per_minute,
+    ROUND(assists_per_game / NULLIF(turnovers_per_game, 0), 2) AS ast_to_to_ratio_calc
+FROM nfl_player_stats_clean p
+JOIN top_2024_players t
+    ON p.player_name = t.player_name
+ORDER BY player_name, season_year;
+
